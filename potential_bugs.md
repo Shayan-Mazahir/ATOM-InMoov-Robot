@@ -1,4 +1,4 @@
-## Known Issue — Angle Calculation Edge Case
+## Known Issue - Angle Calculation Edge Case
 
 **Status:** Unconfirmed - cannot be tested until hand is printed
 
