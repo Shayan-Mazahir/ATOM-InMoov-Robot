@@ -1,5 +1,6 @@
 # Hand Mechanics for Someone Who Came Into CS Because They Hate Biology
 
+# Made using Claude AI
 ---
 
 ## Disclaimer
