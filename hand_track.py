@@ -2,6 +2,11 @@ import math
 import time
 import cv2
 import mediapipe as mp
+import serial
+from collections import deque
+
+# Opening the serial connection to the ESP32
+ser = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)
 
 # ─── MediaPipe Tasks API Setup ───────────────────────────────────────────────
 # Aliases for cleaner code
@@ -210,6 +215,17 @@ with HandLandmarker.create_from_options(options) as landmarker:
                         key = f"{finger_name}_{b}"
                         servo = map_to_servo(angle, calibration_min[key], calibration_max[key])
                         print(f"{finger_name} joint {b}: {angle:.1f}° → servo: {servo:.1f}°")
+
+                        # Rolling average buffer - stores last N amount of readings
+                        smooth_buffer = deque(maxlen = 10) 
+
+                        # Then when you get a servo value:
+                        smooth_buffer.append(servo)
+                        smoothed = sum(smooth_buffer) / len(smooth_buffer)
+
+                        if key == "index_6":
+                            ser.write(f"{int(servo)}\n".encode())
+                        # ser.write(f"{int(servo)}\n".encode())
 
         cv2.imshow("Hand Tracking", frame)
 
