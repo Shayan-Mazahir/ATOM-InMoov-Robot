@@ -15,7 +15,7 @@ with open('protocol.json') as f:
 
 SERVO_MAP = protocol['servo_map']         # Maps joint keys (e.g. "index_6") to servo slot indices
 ser = serial.Serial(protocol['serial']['port'], protocol['serial']['baud'], timeout=1)
-smooth_buffer = deque(maxlen=protocol['smoothing']['buffer_size'])
+smooth_buffer = deque(maxlen = protocol['smoothing']['buffer_size'])
 SEND_INTERVAL = protocol['send_interval'] # Minimum seconds between serial transmissions
 
 # ------- MediaPipe Tasks API Setup --------------------------------------------

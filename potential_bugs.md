@@ -20,25 +20,28 @@ the calculated angle may read the same as a fully closed fist (~ 0°).
 
 ------------------------------------------------------------------------------------------------------------------------------
 
-2. ## Known Issue - Servo Jitter & Smoothing
+## Known Issue — Servo Jitter & Smoothing
 
-**Status:** Partially implemented - needs tuning with actual hardware
+**Status:** Mostly resolved in software — final tuning needs hardware
 
 **Issue:**
-Raw angle values sent to servo every frame cause jitter and erratic movement.
-Even small natural hand movements create rapid value changes the servo tries to follow.
+Raw angle values sent to servo every frame caused jitter and erratic movement.
+Even small natural hand movements created rapid value changes the servo tried to follow.
 
-**Current State:**
-Rolling average buffer implemented (deque maxlen=5) but buffer size not tuned.
+**What was fixed:**
+- Rolling average buffer implemented (deque, configurable via protocol.json)
+- Send rate limited to 50ms intervals (20Hz) via SEND_INTERVAL in protocol.json
+- Pre-filled buffer with neutral value (90°) to prevent cold start jumping
+- Reduced to single joint calculation in main loop for performance
 
-**What needs tuning when hand is printed:**
-- Buffer size (currently 5) - increase if jittery, decrease if too laggy
-- Send rate - currently sending every frame, may need rate limiting
-- Deadband - ignore changes smaller than X degrees to prevent hunting
+**What still needs hardware tuning:**
+- Buffer size (currently 3 in protocol.json) — increase if jittery, decrease if laggy
+- Deadband — ignore changes smaller than X degrees to prevent hunting
+- Send rate — may need further adjustment based on servo response time
 
 **Expected behavior after tuning:**
-- Smooth servo movement that follows intentional finger movement
+- Smooth servo movement following intentional finger movement
 - Ignores tiny natural hand tremors
-- No noticeable lag between finger movement and servo response
+- No noticeable lag between finger and servo response
 
-**Priority:** High - test immediately when hand is printed
+**Priority:** Low until hand is printed - test when hand is printed
