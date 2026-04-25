@@ -1,0 +1,17 @@
+{
+    "servo_map": {
+        "index_6": 0,
+        "middle_10": 1,
+        "ring_14": 2,
+        "pinky_18": 3,
+        "thumb_3": 4
+    },
+    "serial": {
+        "port": "/dev/ttyUSB0",
+        "baud": 921600
+    },
+    "smoothing": {
+        "buffer_size": 3
+    },
+    "send_interval": 0.05
+}

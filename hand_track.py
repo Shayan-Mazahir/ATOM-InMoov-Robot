@@ -4,11 +4,21 @@ import cv2
 import mediapipe as mp
 import serial
 from collections import deque
+import json
 
-# Opening the serial connection to the ESP32
-ser = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)
+last_send_time = 0
 
-# ─── MediaPipe Tasks API Setup ───────────────────────────────────────────────
+# ------- Config Loading -------------------------------------------------------
+# Load serial port, smoothing settings, servo map, and send interval from file
+with open('protocol.json') as f:
+    protocol = json.load(f)
+
+SERVO_MAP = protocol['servo_map']         # Maps joint keys (e.g. "index_6") to servo slot indices
+ser = serial.Serial(protocol['serial']['port'], protocol['serial']['baud'], timeout=1)
+smooth_buffer = deque(maxlen=protocol['smoothing']['buffer_size'])
+SEND_INTERVAL = protocol['send_interval'] # Minimum seconds between serial transmissions
+
+# ------- MediaPipe Tasks API Setup --------------------------------------------
 # Aliases for cleaner code
 BaseOptions = mp.tasks.BaseOptions
 HandLandmarker = mp.tasks.vision.HandLandmarker
@@ -33,7 +43,7 @@ FINGER_JOINTS = {
 
 def calculate_angle(A, B, C):
     """
-    Calculate the angle at joint B, formed by points A–B–C.
+    Calculate the angle at joint B, formed by points A-B-C.
 
     Uses the dot product formula:
         cos(θ) = (BA · BC) / (|BA| * |BC|)
@@ -136,7 +146,7 @@ def calibrate(cap, landmarker):
 
 def map_to_servo(angle, min_angle, max_angle):
     """
-    Map a joint angle to a servo motor position (0–180°).
+    Map a joint angle to a servo motor position (0-180°).
 
     Linearly scales the measured angle from the calibrated [min, max] range
     to the servo's [0, 180] range, then clamps the result to stay in bounds.
@@ -166,7 +176,7 @@ def print_result(result: HandLandmarkerResult, output_image: mp.Image, timestamp
     latest_landmarks = result.hand_landmarks
 
 
-# ─── Landmarker Configuration ─────────────────────────────────────────────────
+# ------- Landmarker Configuration ---------------------------------------------
 # LIVE_STREAM mode processes frames asynchronously - results arrive via callback
 options = HandLandmarkerOptions(
     base_options=BaseOptions(model_asset_path='./models/hand_landmarker.task'),
@@ -180,7 +190,10 @@ cap = cv2.VideoCapture(0)  # 0 = default webcam
 # MediaPipe requires a strictly increasing timestamp (in ms) for LIVE_STREAM mode
 timestamp = 0
 
-# ─── Main Loop ────────────────────────────────────────────────────────────────
+# One deque per joint key - lazily initialized in the main loop
+smooth_buffers = {}
+
+# ------- Main Loop ------------------------------------------------------------
 with HandLandmarker.create_from_options(options) as landmarker:
 
     # Collect calibration data before starting tracking
@@ -202,36 +215,61 @@ with HandLandmarker.create_from_options(options) as landmarker:
         if latest_landmarks:
             for hand in latest_landmarks:
 
-                # Draw a green dot at each of the 21 hand landmarks
-                for lm in hand:
-                    h, w, _ = frame.shape
-                    cx, cy = int(lm.x * w), int(lm.y * h)  # Normalize → pixel coords
-                    cv2.circle(frame, (cx, cy), 5, (0, 255, 0), -1)
-
-                # Calculate each joint angle and map it to a servo position
+                # Draw green dots only on the three landmark points of each
+                # active joint (i.e. joints present in SERVO_MAP)
+                h, w, _ = frame.shape
                 for finger_name, joints in FINGER_JOINTS.items():
                     for (a, b, c) in joints:
-                        angle = calculate_angle(hand[a], hand[b], hand[c])
                         key = f"{finger_name}_{b}"
+                        if key in SERVO_MAP:
+                            for idx in [a, b, c]:
+                                cx, cy = int(hand[idx].x * w), int(hand[idx].y * h)
+                                cv2.circle(frame, (cx, cy), 5, (0, 255, 0), -1)
+
+                # One slot per servo channel; order matches protocol.json
+                servo_values = [0] * 5
+
+                for finger_name, joints in FINGER_JOINTS.items():
+                    for (a, b, c) in joints:
+                        key = f"{finger_name}_{b}"
+
+                        # Skip joints not wired to a servo
+                        if key not in SERVO_MAP:
+                            continue
+
+                        angle = calculate_angle(hand[a], hand[b], hand[c])
                         servo = map_to_servo(angle, calibration_min[key], calibration_max[key])
-                        print(f"{finger_name} joint {b}: {angle:.1f}° → servo: {servo:.1f}°")
 
-                        # Rolling average buffer - stores last N amount of readings
-                        smooth_buffer = deque(maxlen = 10) 
+                        # Create a smoothing buffer for this joint on first encounter,
+                        # pre-filled with 90° so it doesn't start from zero
+                        if key not in smooth_buffers:
+                            smooth_buffers[key] = deque(
+                                [90] * protocol['smoothing']['buffer_size'],
+                                maxlen=protocol['smoothing']['buffer_size']
+                            )
 
-                        # Then when you get a servo value:
-                        smooth_buffer.append(servo)
-                        smoothed = sum(smooth_buffer) / len(smooth_buffer)
+                        # Append latest value and compute rolling average
+                        smooth_buffers[key].append(servo)
+                        smoothed = sum(smooth_buffers[key]) / len(smooth_buffers[key])
 
-                        if key == "index_6":
-                            ser.write(f"{int(servo)}\n".encode())
-                        # ser.write(f"{int(servo)}\n".encode())
+                        # Write smoothed angle into the correct serial slot
+                        slot = SERVO_MAP[key]
+                        servo_values[slot] = int(smoothed)
+
+                        print(f"{key}: {angle:.1f}° → servo slot {slot}: {int(smoothed)}°")
+
+                # Rate-limited serial send - transmit all 5 slots as "a,b,c,d,e\n"
+                current_time = time.time()
+                if current_time - last_send_time >= SEND_INTERVAL:
+                    message = ",".join(map(str, servo_values)) + "\n"
+                    ser.write(message.encode())
+                    last_send_time = current_time
 
         cv2.imshow("Hand Tracking", frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break  # Press Q to exit
 
-# ─── Cleanup ──────────────────────────────────────────────────────────────────
+# ------- Cleanup --------------------------------------------------------------
 cap.release()
 cv2.destroyAllWindows()
