@@ -197,7 +197,7 @@ See `potential_bugs.md` for full list.
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | 2025 | Initial prototype — 5 servos, USB serial, breadboard |
+| 1.0 | 2026 | Initial prototype — 5 servos, USB serial, breadboard |
 | 2.0 | TBD | PCA9685, custom PCB, WiFi |
 | 3.0 | TBD | IMU sensors added |
 | 4.0 | TBD | EMG muscle control |
