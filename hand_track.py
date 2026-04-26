@@ -6,6 +6,14 @@ import serial
 from collections import deque
 import json
 
+'''
+# future wifi implementation
+import socket
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+'''
 last_send_time = 0
 
 # ------- Config Loading -------------------------------------------------------
@@ -15,7 +23,14 @@ with open('protocol.json') as f:
 
 SERVO_MAP = protocol['servo_map']         # Maps joint keys (e.g. "index_6") to servo slot indices
 ser = serial.Serial(protocol['serial']['port'], protocol['serial']['baud'], timeout=1)
-smooth_buffer = deque(maxlen = protocol['smoothing']['buffer_size'])
+'''
+# future wifi implementation
+ESP32_IP = os.getenv('ESP32_IP')
+UDP_PORT = protocol['udp']['port']
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+'''
+
+# smooth_buffer = deque(maxlen = protocol['smoothing']['buffer_size'])
 SEND_INTERVAL = protocol['send_interval'] # Minimum seconds between serial transmissions
 
 # ------- MediaPipe Tasks API Setup --------------------------------------------
@@ -262,7 +277,8 @@ with HandLandmarker.create_from_options(options) as landmarker:
                 current_time = time.time()
                 if current_time - last_send_time >= SEND_INTERVAL:
                     message = ",".join(map(str, servo_values)) + "\n"
-                    ser.write(message.encode())
+                    ser.write(message.encode()) 
+                    # sock.sendto(message.encode(), (ESP32_IP, UDP_PORT)) # future wifi implementation
                     last_send_time = current_time
 
         cv2.imshow("Hand Tracking", frame)
@@ -273,3 +289,4 @@ with HandLandmarker.create_from_options(options) as landmarker:
 # ------- Cleanup --------------------------------------------------------------
 cap.release()
 cv2.destroyAllWindows()
+# sock.close() # future wifi implementation

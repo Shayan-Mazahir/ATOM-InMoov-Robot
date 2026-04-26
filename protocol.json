@@ -10,6 +10,13 @@
         "port": "/dev/ttyUSB0",
         "baud": 921600
     },
+    "wifi": {
+        "esp32_ip": "192.168.1.XXX",
+        "port": 4210
+    },
+    "udp": {
+        "port": 5005
+    },
     "smoothing": {
         "buffer_size": 3
     },

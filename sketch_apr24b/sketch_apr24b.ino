@@ -1,5 +1,5 @@
 #include <ESP32Servo.h>
-#include "wifi_config.h"
+// #include "wifi_config.h"
 
 // ------- Pin Configuration ---------------------------------------------------
 // Servo slot order matches protocol.json servo_map:
