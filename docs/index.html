@@ -5,12 +5,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>InMoov STL Files</title>
-    <script src="https://www.viewstl.com/plugin/three.min.js"></script>
-    <script src="https://www.viewstl.com/plugin/OrbitControls.js"></script>
-    <script src="https://www.viewstl.com/plugin/CanvasRenderer.js"></script>
-    <script src="https://www.viewstl.com/plugin/webgl_detector.js"></script>
-    <script src="https://www.viewstl.com/plugin/stl_viewer.min.js"></script>
-
     <style>
         * {
             margin: 0;
@@ -155,9 +149,10 @@
             color: #666;
         }
 
-        #stl_viewer_cont {
+        #vs_iframe {
             width: 100%;
             height: 360px;
+            border: none;
             background: #f5f5f5;
         }
 
@@ -220,7 +215,7 @@
                 <span id="modal-name">file.stl</span>
                 <button onclick="closeModal()">✕</button>
             </div>
-            <div id="stl_viewer_cont"></div>
+            <iframe id="vs_iframe" src="https://www.viewstl.com/?embedded&bgcolor=f5f5f5"></iframe>
             <div class="modal-footer">
                 <span id="modal-path"></span>
                 <a class="dl" id="dl-btn" download>Download</a>
@@ -245,7 +240,12 @@
 
         let currentPath = ROOT_PATH;
         let cachedContents = {};
-        let stlViewer = null;
+        let iframeReady = false;
+
+        // Wait for iframe to load
+        document.getElementById('vs_iframe').onload = function () {
+            iframeReady = true;
+        };
 
         function saveCache(contents, commitSha) {
             localStorage.setItem(CACHE_KEY, JSON.stringify(contents));
@@ -421,16 +421,26 @@
             document.getElementById('dl-btn').download = name;
             document.getElementById('overlay').classList.add('open');
 
-            if (stlViewer) stlViewer.clean();
-            stlViewer = new StlViewer(
-                document.getElementById('stl_viewer_cont'),
-                { models: [{ id: 0, filename: url }], auto_rotate: true }
-            );
+            const iframe = document.getElementById('vs_iframe');
+            const sendLoad = () => {
+                iframe.contentWindow.postMessage({ msg_type: 'load', url: url }, '*');
+            };
+
+            if (iframeReady) {
+                sendLoad();
+            } else {
+                iframe.onload = function () {
+                    iframeReady = true;
+                    sendLoad();
+                };
+            }
         }
 
         function closeModal() {
             document.getElementById('overlay').classList.remove('open');
-            if (stlViewer) { stlViewer.clean(); stlViewer = null; }
+            try {
+                document.getElementById('vs_iframe').contentWindow.postMessage({ msg_type: 'clean' }, '*');
+            } catch (e) { }
         }
 
         document.getElementById('overlay').addEventListener('click', e => {
