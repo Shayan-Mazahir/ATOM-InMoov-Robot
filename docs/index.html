@@ -4,8 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ATOM — STL Files</title>
-    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.3.0/model-viewer.min.js"></script>
+    <title>InMoov STL Files</title>
+    <script src="https://www.viewstl.com/plugin/three.min.js"></script>
+    <script src="https://www.viewstl.com/plugin/OrbitControls.js"></script>
+    <script src="https://www.viewstl.com/plugin/CanvasRenderer.js"></script>
+    <script src="https://www.viewstl.com/plugin/stl_viewer.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -150,7 +153,7 @@
             color: #666;
         }
 
-        model-viewer {
+        #stl_viewer_cont {
             width: 100%;
             height: 360px;
             background: #f5f5f5;
@@ -215,7 +218,7 @@
                 <span id="modal-name">file.stl</span>
                 <button onclick="closeModal()">✕</button>
             </div>
-            <model-viewer id="viewer" camera-controls auto-rotate shadow-intensity="1"></model-viewer>
+            <div id="stl_viewer_cont"></div>
             <div class="modal-footer">
                 <span id="modal-path"></span>
                 <a class="dl" id="dl-btn" download>Download</a>
@@ -231,19 +234,17 @@
     <script>
         const REPO = "Shayan-Mazahir/ATOM-InMoov-Robot";
         const ROOT_PATH = "stl-files";
-        // const ROOT_PATH = "";
         const API = `https://api.github.com/repos/${REPO}`;
         const RAW = `https://raw.githubusercontent.com/${REPO}/main`;
-        // const RAW = `https://raw.githubusercontent.com/${REPO}/main/stl-files`;
         const CACHE_KEY = "atom_stl_cache";
         const COMMIT_KEY = "atom_last_commit";
         const TIME_KEY = "atom_last_check";
-        const CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour in ms
+        const CHECK_INTERVAL = 60 * 60 * 1000;
 
         let currentPath = ROOT_PATH;
-        let cachedContents = {}; // path -> array of items
+        let cachedContents = {};
+        let stlViewer = null;
 
-        // ─── Cache helpers ────────────────────────────────────────────────────────────
         function saveCache(contents, commitSha) {
             localStorage.setItem(CACHE_KEY, JSON.stringify(contents));
             localStorage.setItem(COMMIT_KEY, commitSha);
@@ -262,7 +263,6 @@
             }
         }
 
-        // ─── GitHub API ───────────────────────────────────────────────────────────────
         async function getLatestCommit() {
             const r = await fetch(`${API}/commits?path=${ROOT_PATH}&per_page=1`);
             const data = await r.json();
@@ -278,7 +278,6 @@
         async function fetchAllContents(path, store) {
             const items = await fetchContents(path);
             store[path] = items;
-            // Prefetch one level of subfolders
             for (const item of items) {
                 if (item.type === 'dir') {
                     const sub = await fetchContents(item.path);
@@ -288,7 +287,6 @@
             return store;
         }
 
-        // ─── Init ────────────────────────────────────────────────────────────────────
         async function init() {
             setStatus("Checking cache...");
             const { contents, commitSha, lastCheck } = loadCache();
@@ -296,20 +294,17 @@
             const hourPassed = (now - lastCheck) > CHECK_INTERVAL;
 
             if (contents && !hourPassed) {
-                // Use cache — no API call needed
                 cachedContents = contents;
                 setStatus(`Cached · last checked ${timeSince(lastCheck)} ago`);
                 render();
                 return;
             }
 
-            // Hour passed — check if commit changed
             setStatus("Checking for updates...");
             try {
                 const latestSha = await getLatestCommit();
 
                 if (contents && latestSha === commitSha) {
-                    // Same commit — use cache, update check time only
                     cachedContents = contents;
                     localStorage.setItem(TIME_KEY, now.toString());
                     setStatus(`No changes · last commit: ${latestSha?.slice(0, 7)}`);
@@ -317,7 +312,6 @@
                     return;
                 }
 
-                // New commit or first load — fetch fresh
                 setStatus("Fetching files from GitHub...");
                 cachedContents = {};
                 await fetchAllContents(ROOT_PATH, cachedContents);
@@ -327,7 +321,6 @@
 
             } catch (e) {
                 if (contents) {
-                    // API failed but we have cache — use it
                     cachedContents = contents;
                     setStatus("Offline — showing cached files");
                     render();
@@ -339,11 +332,9 @@
             }
         }
 
-        // ─── Render ───────────────────────────────────────────────────────────────────
         function render() {
             const items = cachedContents[currentPath] || [];
 
-            // Breadcrumb
             const parts = currentPath.split('/');
             let bc = '';
             parts.forEach((part, i) => {
@@ -356,11 +347,9 @@
             });
             document.getElementById('breadcrumb').innerHTML = bc;
 
-            // Table
             const tbody = document.getElementById('tbody');
             tbody.innerHTML = '';
 
-            // Back button
             if (currentPath !== ROOT_PATH) {
                 const parentPath = currentPath.split('/').slice(0, -1).join('/');
                 const tr = document.createElement('tr');
@@ -375,7 +364,6 @@
                 return;
             }
 
-            // Sort: folders first, then files
             const sorted = [...items].sort((a, b) => {
                 if (a.type === b.type) return a.name.localeCompare(b.name);
                 return a.type === 'dir' ? -1 : 1;
@@ -388,20 +376,20 @@
                     const subItems = cachedContents[item.path];
                     const count = subItems ? subItems.length : '...';
                     tr.innerHTML = `
-        <td>📁</td>
-        <td><a class="name" onclick="navigate('${item.path}')">${item.name}</a></td>
-        <td>${count} items</td>`;
+                        <td>📁</td>
+                        <td><a class="name" onclick="navigate('${item.path}')">${item.name}</a></td>
+                        <td>${count} items</td>`;
                 } else if (item.name.toLowerCase().endsWith('.stl')) {
                     const rawUrl = `${RAW}/${item.path}`;
                     tr.innerHTML = `
-        <td>⬡</td>
-        <td><a class="name" onclick="openModal('${item.name}','${rawUrl}','${item.path}')">${item.name}</a></td>
-        <td>STL</td>`;
+                        <td>⬡</td>
+                        <td><a class="name" onclick="openModal('${item.name}','${rawUrl}','${item.path}')">${item.name}</a></td>
+                        <td>STL</td>`;
                 } else {
                     tr.innerHTML = `
-        <td>📄</td>
-        <td>${item.name}</td>
-        <td>${formatSize(item.size)}</td>`;
+                        <td>📄</td>
+                        <td>${item.name}</td>
+                        <td>${formatSize(item.size)}</td>`;
                 }
                 tbody.appendChild(tr);
             });
@@ -409,13 +397,11 @@
 
         async function navigate(path) {
             currentPath = path;
-            // Fetch if not cached
             if (!cachedContents[path]) {
                 setStatus("Loading...");
                 try {
                     const items = await fetchContents(path);
                     cachedContents[path] = items;
-                    // Update cache
                     const { commitSha } = loadCache();
                     saveCache(cachedContents, commitSha);
                     setStatus("");
@@ -426,26 +412,29 @@
             render();
         }
 
-        // ─── Modal ────────────────────────────────────────────────────────────────────
         function openModal(name, url, path) {
             document.getElementById('modal-name').textContent = name;
             document.getElementById('modal-path').textContent = path;
-            document.getElementById('viewer').setAttribute('src', url);
             document.getElementById('dl-btn').href = url;
             document.getElementById('dl-btn').download = name;
             document.getElementById('overlay').classList.add('open');
+
+            if (stlViewer) stlViewer.clean();
+            stlViewer = new StlViewer(
+                document.getElementById('stl_viewer_cont'),
+                { models: [{ id: 0, filename: url }], auto_rotate: true }
+            );
         }
 
         function closeModal() {
             document.getElementById('overlay').classList.remove('open');
-            document.getElementById('viewer').removeAttribute('src');
+            if (stlViewer) { stlViewer.clean(); stlViewer = null; }
         }
 
         document.getElementById('overlay').addEventListener('click', e => {
             if (e.target === document.getElementById('overlay')) closeModal();
         });
 
-        // ─── Helpers ──────────────────────────────────────────────────────────────────
         function setStatus(msg) {
             document.getElementById('status').textContent = msg;
         }
