@@ -149,11 +149,26 @@
             color: #666;
         }
 
-        #vs_iframe {
+        #canvas-container {
             width: 100%;
             height: 360px;
-            border: none;
-            background: #f5f5f5;
+            background: #f0f0f0;
+            position: relative;
+        }
+
+        #canvas-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        #canvas-loading {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #999;
+            font-size: 0.85rem;
         }
 
         .modal-footer {
@@ -215,7 +230,9 @@
                 <span id="modal-name">file.stl</span>
                 <button onclick="closeModal()">✕</button>
             </div>
-            <iframe id="vs_iframe" src="https://www.viewstl.com/?embedded&bgcolor=f5f5f5"></iframe>
+            <div id="canvas-container">
+                <div id="canvas-loading">Loading model...</div>
+            </div>
             <div class="modal-footer">
                 <span id="modal-path"></span>
                 <a class="dl" id="dl-btn" download>Download</a>
@@ -228,7 +245,21 @@
         Built by <a href="https://github.com/Shayan-Mazahir">Raza</a>
     </footer>
 
-    <script>
+    <script type="importmap">
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+}
+</script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ─── Config ───────────────────────────────────────────────────────────────
         const REPO = "Shayan-Mazahir/ATOM-InMoov-Robot";
         const ROOT_PATH = "stl-files";
         const API = `https://api.github.com/repos/${REPO}`;
@@ -240,13 +271,81 @@
 
         let currentPath = ROOT_PATH;
         let cachedContents = {};
-        let iframeReady = false;
 
-        // Wait for iframe to load
-        document.getElementById('vs_iframe').onload = function () {
-            iframeReady = true;
-        };
+        // ─── Three.js viewer ──────────────────────────────────────────────────────
+        let renderer, scene, camera, controls, animId;
 
+        function initThree() {
+            const container = document.getElementById('canvas-container');
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setClearColor(0xf0f0f0);
+            container.appendChild(renderer.domElement);
+
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 10000);
+            camera.position.set(0, 0, 200);
+
+            const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambient);
+            const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+            dir.position.set(1, 2, 3);
+            scene.add(dir);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+
+            function animate() {
+                animId = requestAnimationFrame(animate);
+                controls.update();
+                renderer.render(scene, camera);
+            }
+            animate();
+        }
+
+        function loadSTL(url) {
+            // Clear existing meshes
+            scene.children = scene.children.filter(c => c.isLight || c.isAmbientLight);
+
+            document.getElementById('canvas-loading').style.display = 'flex';
+
+            const loader = new STLLoader();
+            loader.load(url, (geometry) => {
+                geometry.computeBoundingBox();
+                const box = geometry.boundingBox;
+                const center = new THREE.Vector3();
+                box.getCenter(center);
+                geometry.translate(-center.x, -center.y, -center.z);
+
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                const maxDim = Math.max(size.x, size.y, size.z);
+                camera.position.set(0, 0, maxDim * 1.8);
+                controls.reset();
+
+                const material = new THREE.MeshPhongMaterial({ color: 0x909090, specular: 0x111111, shininess: 30 });
+                const mesh = new THREE.Mesh(geometry, material);
+                scene.add(mesh);
+
+                document.getElementById('canvas-loading').style.display = 'none';
+            }, undefined, () => {
+                document.getElementById('canvas-loading').textContent = 'Failed to load model';
+            });
+        }
+
+        function destroyThree() {
+            if (animId) cancelAnimationFrame(animId);
+            if (renderer) {
+                renderer.dispose();
+                const container = document.getElementById('canvas-container');
+                if (renderer.domElement.parentNode === container) {
+                    container.removeChild(renderer.domElement);
+                }
+            }
+            renderer = scene = camera = controls = animId = null;
+        }
+
+        // ─── Cache ────────────────────────────────────────────────────────────────
         function saveCache(contents, commitSha) {
             localStorage.setItem(CACHE_KEY, JSON.stringify(contents));
             localStorage.setItem(COMMIT_KEY, commitSha);
@@ -265,6 +364,7 @@
             }
         }
 
+        // ─── GitHub API ───────────────────────────────────────────────────────────
         async function getLatestCommit() {
             const r = await fetch(`${API}/commits?path=${ROOT_PATH}&per_page=1`);
             const data = await r.json();
@@ -289,6 +389,7 @@
             return store;
         }
 
+        // ─── Init ─────────────────────────────────────────────────────────────────
         async function init() {
             setStatus("Checking cache...");
             const { contents, commitSha, lastCheck } = loadCache();
@@ -305,7 +406,6 @@
             setStatus("Checking for updates...");
             try {
                 const latestSha = await getLatestCommit();
-
                 if (contents && latestSha === commitSha) {
                     cachedContents = contents;
                     localStorage.setItem(TIME_KEY, now.toString());
@@ -313,14 +413,12 @@
                     render();
                     return;
                 }
-
                 setStatus("Fetching files from GitHub...");
                 cachedContents = {};
                 await fetchAllContents(ROOT_PATH, cachedContents);
                 saveCache(cachedContents, latestSha);
                 setStatus(`Updated · commit: ${latestSha?.slice(0, 7)}`);
                 render();
-
             } catch (e) {
                 if (contents) {
                     cachedContents = contents;
@@ -334,18 +432,15 @@
             }
         }
 
+        // ─── Render ───────────────────────────────────────────────────────────────
         function render() {
             const items = cachedContents[currentPath] || [];
-
             const parts = currentPath.split('/');
             let bc = '';
             parts.forEach((part, i) => {
                 const partPath = parts.slice(0, i + 1).join('/');
-                if (i < parts.length - 1) {
-                    bc += `<a onclick="navigate('${partPath}')">${part}</a> / `;
-                } else {
-                    bc += part;
-                }
+                if (i < parts.length - 1) bc += `<a onclick="navigate('${partPath}')">${part}</a> / `;
+                else bc += part;
             });
             document.getElementById('breadcrumb').innerHTML = bc;
 
@@ -373,31 +468,21 @@
 
             sorted.forEach(item => {
                 const tr = document.createElement('tr');
-
                 if (item.type === 'dir') {
                     const subItems = cachedContents[item.path];
                     const count = subItems ? subItems.length : '...';
-                    tr.innerHTML = `
-                        <td>📁</td>
-                        <td><a class="name" onclick="navigate('${item.path}')">${item.name}</a></td>
-                        <td>${count} items</td>`;
+                    tr.innerHTML = `<td>📁</td><td><a class="name" onclick="navigate('${item.path}')">${item.name}</a></td><td>${count} items</td>`;
                 } else if (item.name.toLowerCase().endsWith('.stl')) {
                     const rawUrl = `${RAW}/${item.path}`;
-                    tr.innerHTML = `
-                        <td>⬡</td>
-                        <td><a class="name" onclick="openModal('${item.name}','${rawUrl}','${item.path}')">${item.name}</a></td>
-                        <td>STL</td>`;
+                    tr.innerHTML = `<td>⬡</td><td><a class="name" onclick="openModal('${item.name}','${rawUrl}','${item.path}')">${item.name}</a></td><td>STL</td>`;
                 } else {
-                    tr.innerHTML = `
-                        <td>📄</td>
-                        <td>${item.name}</td>
-                        <td>${formatSize(item.size)}</td>`;
+                    tr.innerHTML = `<td>📄</td><td>${item.name}</td><td>${formatSize(item.size)}</td>`;
                 }
                 tbody.appendChild(tr);
             });
         }
 
-        async function navigate(path) {
+        window.navigate = async function (path) {
             currentPath = path;
             if (!cachedContents[path]) {
                 setStatus("Loading...");
@@ -412,44 +497,31 @@
                 }
             }
             render();
-        }
+        };
 
-        function openModal(name, url, path) {
+        window.openModal = function (name, url, path) {
             document.getElementById('modal-name').textContent = name;
             document.getElementById('modal-path').textContent = path;
             document.getElementById('dl-btn').href = url;
             document.getElementById('dl-btn').download = name;
+            document.getElementById('canvas-loading').textContent = 'Loading model...';
+            document.getElementById('canvas-loading').style.display = 'flex';
             document.getElementById('overlay').classList.add('open');
 
-            const iframe = document.getElementById('vs_iframe');
-            const sendLoad = () => {
-                iframe.contentWindow.postMessage({ msg_type: 'load', url: url }, '*');
-            };
+            if (!renderer) initThree();
+            loadSTL(url);
+        };
 
-            if (iframeReady) {
-                sendLoad();
-            } else {
-                iframe.onload = function () {
-                    iframeReady = true;
-                    sendLoad();
-                };
-            }
-        }
-
-        function closeModal() {
+        window.closeModal = function () {
             document.getElementById('overlay').classList.remove('open');
-            try {
-                document.getElementById('vs_iframe').contentWindow.postMessage({ msg_type: 'clean' }, '*');
-            } catch (e) { }
-        }
+            destroyThree();
+        };
 
         document.getElementById('overlay').addEventListener('click', e => {
-            if (e.target === document.getElementById('overlay')) closeModal();
+            if (e.target === document.getElementById('overlay')) window.closeModal();
         });
 
-        function setStatus(msg) {
-            document.getElementById('status').textContent = msg;
-        }
+        function setStatus(msg) { document.getElementById('status').textContent = msg; }
 
         function formatSize(bytes) {
             if (!bytes) return '';
