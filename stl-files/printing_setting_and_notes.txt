@@ -1,0 +1,75 @@
+INMOOV — GENERAL PRINT GUIDE
+=============================
+A starting point for anyone printing InMoov parts on any FDM printer.
+Will be updating this file as I learn what works for me specifically.
+
+BEFORE YOU PRINT ANYTHING
+--------------------------
+Print the calibrator first. Always.
+https://inmoov.fr/wp-content/uploads/2019/01/Calibrator.stl (or visit InMoov website)
+
+The calibrator tests whether screw holes and joint pins fit correctly
+on YOUR printer. Every printer is different.
+
+==================================================
+Do not skip this step.
+==================================================
+
+Adjust X-Y hole compensation / horizontal expansion until fit is correct.
+Reprint calibrator after each adjustment to verify.
+
+Tip: After 1-2 insertions, PLA wears in slightly. Account for this.
+
+
+RECOMMENDED SETTINGS (starting point)
+---------------------------------------
+Material:       PLA
+Layer Height:   0.25mm maximum
+Infill:         30%
+Wall Thickness: 2mm
+                (divide by nozzle diameter to get wall loops)
+                e.g. 0.4mm nozzle = 5 loops
+                e.g. 0.6mm nozzle = 3-4 loops
+
+Supports:       Only where explicitly stated per part
+                InMoov structural parts have built-in supports
+                Do NOT add slicer supports to structural parts
+
+
+HOLE COMPENSATION
+------------------
+X-Y hole compensation adjusts how holes are sized after slicing.
+Check your slicer's documentation for the correct setting name and direction.
+
+OrcaSlicer:   Process -> Quality -> Precision -> X-Y Hole Compensation
+              Positive value = bigger holes
+              Negative value = smaller holes
+
+PrusaSlicer:  Print Settings -> Advanced -> Hole size compensation
+              Positive value = bigger holes
+
+Cura:         No direct equivalent - use horizontal expansion instead
+              Negative value = bigger holes (opposite direction)
+
+Start with ±0.15mm and adjust from there based on calibrator results.
+
+
+COMMON ISSUES
+--------------
+Too tight:          Increase hole compensation (make holes bigger)
+Too loose:          Decrease hole compensation (make holes smaller)
+Stringing:          Lower temp 5°C, increase retraction distance
+Part lifts:         Add brim, use bed adhesive, slow first layer speed
+Supports stuck:     Use flush cutters carefully, never add extra supports
+                    to parts that already have built-in ones
+Layer shifting:     Tighten belts, reduce print speed
+Poor bridging:      Enable cooling fan, reduce bridge speed
+
+
+RESOURCES
+----------
+InMoov official site:  https://inmoov.fr
+InMoov hand guide:     https://inmoov.fr/inmoov-hand/
+STL file browser:      https://shayan-mazahir.github.io/ATOM-InMoov-Robot
+GitHub repo:           https://github.com/Shayan-Mazahir/ATOM-InMoov-Robot
+InMoov community:      https://inmoov.fr/forum/
