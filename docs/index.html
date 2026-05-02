@@ -475,6 +475,9 @@
                 } else if (item.name.toLowerCase().endsWith('.stl')) {
                     const rawUrl = `${RAW}/${item.path}`;
                     tr.innerHTML = `<td>⬡</td><td><a class="name" onclick="openModal('${item.name}','${rawUrl}','${item.path}')">${item.name}</a></td><td>STL</td>`;
+                } else if (item.name.toLowerCase().endsWith('.txt')) {
+                const rawUrl = `${RAW}/${item.path}`;
+                tr.innerHTML = `<td>📄</td><td><a class="name" href="${rawUrl}" target="_blank">${item.name}</a></td><td>TXT</td>`;
                 } else {
                     tr.innerHTML = `<td>📄</td><td>${item.name}</td><td>${formatSize(item.size)}</td>`;
                 }
