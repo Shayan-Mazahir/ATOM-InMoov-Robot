@@ -1,0 +1,1 @@
+you need to add manual supports on these prints based on your printer, my printer was not able to print them without supports; i had to manually add them in order to print them successfully
