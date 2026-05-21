@@ -1,0 +1,4 @@
+After placing in servo bed with the servo motors, you need to ensure that all the servos are at an angle of 90 degree.
+"Now use this script with your Arduino to set all your servos at 90 degrees." - Gael on forearm website,
+over here, the txt file named as "servo calibrate.txt" contains that code which you can use to calibrate your servo motors
+the fingers start from Digital pin 2 to 6 respectively.
