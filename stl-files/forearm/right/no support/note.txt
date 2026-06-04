@@ -1,0 +1,3 @@
+If you are using a different servo than the one recommended on InMoov's website i.e if you are using some other servo other than JX PDI-6225MG-300, you might need to change the hole compensation for the RoboRingV3 and the one part which sits on the servo in i2_WristGrearV1.
+
+In my case I am using the DS3218 - MS24 20kg/cm servo, so for me with 0.15 hole compensation, the printed parts were too big to fit the servo horn, I had to reprint it in 0.8/0.9 to be able to use them properly,
