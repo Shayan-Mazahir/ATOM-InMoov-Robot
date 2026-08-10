@@ -15,7 +15,7 @@
       ↓
 [PCA9685 Servo Driver] ← future upgrade
       ↓
-[MG996R Servos x5]
+[MS24 Servos x5]
       ↓
 [InMoov Hand - Tendon Driven]
 ```
@@ -32,7 +32,7 @@
 ### Actuators
 | Component | Model | Qty | Notes |
 |-----------|-------|-----|-------|
-| Servo Motor | MG996R 180° | 5 | One per finger, metal gear, high torque |
+| Servo Motor | MS24 180° | 5 | One per finger, metal gear, high torque |
 
 ### Power
 | Component | Spec | Qty | Notes |
@@ -81,7 +81,7 @@
 
 ### Servo Wiring (per servo)
 ```
-MG996R          ESP32 / Power Supply
+MS24          ESP32 / Power Supply
 ------          -------------------
 Brown (GND) --> Common GND
 Red (VCC)   --> 5V Power Supply (+)
@@ -144,8 +144,8 @@ Example:
 | Component | Voltage | Current (idle) | Current (load) |
 |-----------|---------|----------------|----------------|
 | ESP32 | 3.3V | ~80mA | ~240mA |
-| MG996R x1 | 5V | ~10mA | ~500mA |
-| MG996R x5 | 5V | ~50mA | ~2500mA |
+| MS24 x1 | 5V | ~10mA | ~500mA |
+| MS24 x5 | 5V | ~50mA | ~2500mA |
 | **Total** | | **~130mA** | **~2740mA** |
 
 > ⚠️ 5 servos under load can draw up to 2.5A.
