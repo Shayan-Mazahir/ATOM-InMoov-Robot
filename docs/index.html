@@ -181,8 +181,32 @@
             color: #666;
         }
 
+        .modal-meta {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+            margin-right: 1rem;
+        }
+
+        .modal-meta #modal-path {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #modal-dims {
+            color: #333;
+            font-variant-numeric: tabular-nums;
+        }
+
+        #modal-dims .oversize {
+            color: #b45309;
+        }
+
         .dl {
             background: #222;
+            flex-shrink: 0;
             color: #fff;
             padding: 0.4rem 0.9rem;
             border-radius: 3px;
@@ -234,7 +258,10 @@
                 <div id="canvas-loading">Loading model...</div>
             </div>
             <div class="modal-footer">
-                <span id="modal-path"></span>
+                <div class="modal-meta">
+                    <span id="modal-path"></span>
+                    <span id="modal-dims"></span>
+                </div>
                 <a class="dl" id="dl-btn" download>Download</a>
             </div>
         </div>
@@ -255,17 +282,34 @@
 </script>
 
     <script type="module">
-        import * as THREE from 'three';
-        import { STLLoader } from 'three/addons/loaders/STLLoader.js';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        // three.js is loaded on demand, NOT at the top of this file.
+        // A static import here would mean a slow or blocked CDN stops the whole
+        // script from running, leaving the file list stuck on "Loading..." even
+        // though browsing files needs no 3D at all. It also saves everyone who
+        // never opens a model from downloading the library.
+        let THREE, STLLoader, OrbitControls;
+
+        async function ensureThree() {
+            if (THREE) return;
+            const [three, stl, orbit] = await Promise.all([
+                import('three'),
+                import('three/addons/loaders/STLLoader.js'),
+                import('three/addons/controls/OrbitControls.js')
+            ]);
+            THREE = three;
+            STLLoader = stl.STLLoader;
+            OrbitControls = orbit.OrbitControls;
+        }
 
         // ─── Config ───────────────────────────────────────────────────────────────
         const REPO = "Shayan-Mazahir/ATOM-InMoov-Robot";
+        const BRANCH = "main";
         const ROOT_PATH = "stl-files";
+        const BED_MM = 220;   // Flashforge Adventurer 5M build volume, used to flag oversized parts
         const API = `https://api.github.com/repos/${REPO}`;
-        const RAW = `https://raw.githubusercontent.com/${REPO}/main`;
-        const CACHE_KEY = "atom_stl_cache";
-        const COMMIT_KEY = "atom_last_commit";
+        const RAW = `https://raw.githubusercontent.com/${REPO}/${BRANCH}`;
+        const CACHE_KEY = "atom_stl_cache_v2";
+        const COMMIT_KEY = "atom_last_tree_sha";
         const TIME_KEY = "atom_last_check";
         const CHECK_INTERVAL = 60 * 60 * 1000;
 
@@ -274,10 +318,13 @@
 
         // ─── Three.js viewer ──────────────────────────────────────────────────────
         let renderer, scene, camera, controls, animId;
+        let currentMesh = null;   // the STL currently on screen, tracked so it can be disposed
+        let resizeObserver = null;
 
         function initThree() {
             const container = document.getElementById('canvas-container');
             renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             renderer.setSize(container.clientWidth, container.clientHeight);
             renderer.setClearColor(0xf0f0f0);
             container.appendChild(renderer.domElement);
@@ -295,6 +342,20 @@
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
 
+            // Keep the camera and canvas in step with the container size.
+            // The canvas is stretched to 100% by CSS, so without this the model
+            // distorts whenever the window or phone orientation changes.
+            resizeObserver = new ResizeObserver(() => {
+                if (!renderer || !camera) return;
+                const w = container.clientWidth;
+                const h = container.clientHeight;
+                if (!w || !h) return;
+                camera.aspect = w / h;
+                camera.updateProjectionMatrix();
+                renderer.setSize(w, h);
+            });
+            resizeObserver.observe(container);
+
             function animate() {
                 animId = requestAnimationFrame(animate);
                 controls.update();
@@ -303,14 +364,43 @@
             animate();
         }
 
-        function loadSTL(url) {
-            // Clear existing meshes
-            scene.children = scene.children.filter(c => c.isLight || c.isAmbientLight);
+        // Remove the current mesh and release its GPU buffers.
+        // Dropping the reference alone is not enough - geometry and material
+        // hold WebGL resources that only dispose() frees.
+        function clearModel() {
+            if (!currentMesh) return;
+            if (scene) scene.remove(currentMesh);
+            currentMesh.geometry.dispose();
+            currentMesh.material.dispose();
+            currentMesh = null;
+        }
 
-            document.getElementById('canvas-loading').style.display = 'flex';
+        function setCanvasMessage(msg) {
+            const el = document.getElementById('canvas-loading');
+            el.textContent = msg;
+            el.style.display = 'flex';
+        }
+
+        // Bounding box in millimetres. STL has no unit header, but every slicer
+        // and every InMoov part treats the numbers as mm, so this is the size
+        // the part will actually print at.
+        function showDimensions(size) {
+            const dims = [size.x, size.y, size.z].map(v => v.toFixed(1));
+            const oversize = Math.max(size.x, size.y, size.z) > BED_MM;
+            document.getElementById('modal-dims').innerHTML =
+                `${dims.join(' × ')} mm` +
+                (oversize ? ` <span class="oversize">· exceeds ${BED_MM}mm bed</span>` : '');
+        }
+
+        function loadSTL(url, token) {
+            clearModel();
+
+            setCanvasMessage('Loading model...');
 
             const loader = new STLLoader();
             loader.load(url, (geometry) => {
+                if (token !== loadToken) { geometry.dispose(); return; }   // superseded or closed
+
                 geometry.computeBoundingBox();
                 const box = geometry.boundingBox;
                 const center = new THREE.Vector3();
@@ -319,24 +409,53 @@
 
                 const size = new THREE.Vector3();
                 box.getSize(size);
-                const maxDim = Math.max(size.x, size.y, size.z);
-                camera.position.set(0, 0, maxDim * 1.8);
+                showDimensions(size);
+                const maxDim = Math.max(size.x, size.y, size.z) || 1;
+
+                // Frame the part based on its actual size.
+                // controls.reset() has to happen BEFORE the camera is moved:
+                // it restores the position the controls were built with, so
+                // calling it afterwards would throw this framing away.
                 controls.reset();
+                controls.target.set(0, 0, 0);
+                camera.position.set(0, 0, maxDim * 1.8);
+                camera.near = maxDim / 100;
+                camera.far = maxDim * 100;
+                camera.updateProjectionMatrix();
+                controls.update();
+                controls.saveState();   // so a later reset() returns to this fitted view
 
                 const material = new THREE.MeshPhongMaterial({ color: 0x909090, specular: 0x111111, shininess: 30 });
-                const mesh = new THREE.Mesh(geometry, material);
-                scene.add(mesh);
+                currentMesh = new THREE.Mesh(geometry, material);
+                scene.add(currentMesh);
 
                 document.getElementById('canvas-loading').style.display = 'none';
-            }, undefined, () => {
-                document.getElementById('canvas-loading').textContent = 'Failed to load model';
+            }, (evt) => {
+                // Progress feedback. Some of these parts are over 1 MB, which is
+                // a long silent wait on a phone connection.
+                if (token !== loadToken) return;
+                if (evt.lengthComputable && evt.total) {
+                    setCanvasMessage(`Loading model... ${Math.round(evt.loaded / evt.total * 100)}%`);
+                } else if (evt.loaded) {
+                    setCanvasMessage(`Loading model... ${formatSize(evt.loaded)}`);
+                }
+            }, () => {
+                if (token !== loadToken) return;
+                setCanvasMessage('Failed to load model');
             });
         }
 
         function destroyThree() {
             if (animId) cancelAnimationFrame(animId);
+            if (resizeObserver) {
+                resizeObserver.disconnect();
+                resizeObserver = null;
+            }
+            clearModel();
+            if (controls) controls.dispose();
             if (renderer) {
                 renderer.dispose();
+                renderer.forceContextLoss();   // browsers cap concurrent WebGL contexts
                 const container = document.getElementById('canvas-container');
                 if (renderer.domElement.parentNode === container) {
                     container.removeChild(renderer.domElement);
@@ -365,26 +484,57 @@
         }
 
         // ─── GitHub API ───────────────────────────────────────────────────────────
-        async function getLatestCommit() {
-            const r = await fetch(`${API}/commits?path=${ROOT_PATH}&per_page=1`);
-            const data = await r.json();
-            return data[0]?.sha || null;
+        // The whole file tree comes back in ONE request via the Git Trees API.
+        // The old approach walked the contents API folder by folder, which cost
+        // roughly 17 requests to browse everything. Unauthenticated callers only
+        // get 60 requests per hour per IP, so that ran out fast on a few reloads.
+        class RateLimitError extends Error {
+            constructor(resetEpochSeconds) {
+                const mins = resetEpochSeconds
+                    ? Math.max(1, Math.ceil((resetEpochSeconds * 1000 - Date.now()) / 60000))
+                    : null;
+                super(mins
+                    ? `GitHub API rate limit reached. Try again in about ${mins} min.`
+                    : `GitHub API rate limit reached. Try again shortly.`);
+                this.rateLimited = true;
+            }
         }
 
-        async function fetchContents(path) {
-            const r = await fetch(`${API}/contents/${path}`);
-            if (!r.ok) return [];
+        async function fetchTree() {
+            const r = await fetch(`${API}/git/trees/${BRANCH}?recursive=1`);
+
+            // 403/429 with no remaining quota means rate limited, not missing data.
+            // Returning an empty list here is what used to render as "Empty folder".
+            if (r.status === 403 || r.status === 429) {
+                if (r.headers.get('x-ratelimit-remaining') === '0') {
+                    throw new RateLimitError(Number(r.headers.get('x-ratelimit-reset')));
+                }
+                throw new Error('GitHub denied the request (403).');
+            }
+            if (!r.ok) throw new Error(`GitHub API error ${r.status}.`);
             return await r.json();
         }
 
-        async function fetchAllContents(path, store) {
-            const items = await fetchContents(path);
-            store[path] = items;
-            for (const item of items) {
-                if (item.type === 'dir') {
-                    const sub = await fetchContents(item.path);
-                    store[item.path] = sub;
-                }
+        // Flat tree list -> { "folder/path": [items] } so render() can look up
+        // any folder directly. Only paths under ROOT_PATH are kept.
+        function buildTree(nodes) {
+            const store = { [ROOT_PATH]: [] };
+            const ensure = (dir) => (store[dir] ||= []);
+
+            for (const node of nodes) {
+                if (!node.path.startsWith(ROOT_PATH + '/')) continue;
+
+                const cut = node.path.lastIndexOf('/');
+                const isDir = node.type === 'tree';
+
+                ensure(node.path.slice(0, cut)).push({
+                    name: node.path.slice(cut + 1),
+                    path: node.path,
+                    type: isDir ? 'dir' : 'file',
+                    size: node.size
+                });
+
+                if (isDir) ensure(node.path);   // so empty folders still resolve
             }
             return store;
         }
@@ -405,29 +555,32 @@
 
             setStatus("Checking for updates...");
             try {
-                const latestSha = await getLatestCommit();
-                if (contents && latestSha === commitSha) {
-                    cachedContents = contents;
-                    localStorage.setItem(TIME_KEY, now.toString());
-                    setStatus(`No changes · last commit: ${latestSha?.slice(0, 7)}`);
-                    render();
-                    return;
+                const data = await fetchTree();
+                const sha = data.sha;
+
+                cachedContents = buildTree(data.tree || []);
+                saveCache(cachedContents, sha);
+
+                if (data.truncated) {
+                    setStatus("Warning: the file tree was too large and GitHub truncated it.");
+                } else {
+                    setStatus(sha === commitSha
+                        ? `No changes · ${sha?.slice(0, 7)}`
+                        : `Updated · ${sha?.slice(0, 7)}`);
                 }
-                setStatus("Fetching files from GitHub...");
-                cachedContents = {};
-                await fetchAllContents(ROOT_PATH, cachedContents);
-                saveCache(cachedContents, latestSha);
-                setStatus(`Updated · commit: ${latestSha?.slice(0, 7)}`);
                 render();
             } catch (e) {
+                // Fall back to whatever is cached rather than showing nothing.
                 if (contents) {
                     cachedContents = contents;
-                    setStatus("Offline — showing cached files");
+                    setStatus(e.rateLimited
+                        ? `${e.message} Showing cached files.`
+                        : "Could not reach GitHub. Showing cached files.");
                     render();
                 } else {
-                    setStatus("Failed to load. Check your connection.");
+                    setStatus(e.rateLimited ? e.message : "Failed to load. Check your connection.");
                     document.getElementById('tbody').innerHTML =
-                        '<tr><td colspan="3" class="loading">Could not load files.</td></tr>';
+                        `<tr><td colspan="3" class="loading">${e.rateLimited ? 'Rate limited by GitHub.' : 'Could not load files.'}</td></tr>`;
                 }
             }
         }
@@ -474,7 +627,7 @@
                     tr.innerHTML = `<td>📁</td><td><a class="name" onclick="navigate('${item.path}')">${item.name}</a></td><td>${count} items</td>`;
                 } else if (item.name.toLowerCase().endsWith('.stl')) {
                     const rawUrl = `${RAW}/${item.path}`;
-                    tr.innerHTML = `<td>⬡</td><td><a class="name" onclick="openModal('${item.name}','${rawUrl}','${item.path}')">${item.name}</a></td><td>STL</td>`;
+                    tr.innerHTML = `<td>⬡</td><td><a class="name" onclick="openModal('${item.name}','${rawUrl}','${item.path}')">${item.name}</a></td><td>${formatSize(item.size)}</td>`;
                 } else if (item.name.toLowerCase().endsWith('.txt')) {
                 const rawUrl = `${RAW}/${item.path}`;
                 tr.innerHTML = `<td>📄</td><td><a class="name" href="${rawUrl}" target="_blank">${item.name}</a></td><td>TXT</td>`;
@@ -485,39 +638,113 @@
             });
         }
 
-        window.navigate = async function (path) {
-            currentPath = path;
-            if (!cachedContents[path]) {
-                setStatus("Loading...");
-                try {
-                    const items = await fetchContents(path);
-                    cachedContents[path] = items;
-                    const { commitSha } = loadCache();
-                    saveCache(cachedContents, commitSha);
-                    setStatus("");
-                } catch {
-                    setStatus("Failed to load folder");
-                }
+        // ─── Deep links ───────────────────────────────────────────────────────────
+        // The current folder (or open part) lives in the URL hash, so any view
+        // here can be linked to directly:
+        //   #stl-files/forearm/right/support
+        //   #stl-files/hands/i2_RightHand/no support/i2_HandCoverV1.stl
+        // encodeURI is used rather than encodeURIComponent so the slashes stay
+        // readable while spaces in folder names like "no support" get escaped.
+        function pathToHash(p) { return '#' + encodeURI(p); }
+
+        function hashToPath() {
+            try { return decodeURI(location.hash.slice(1)); } catch { return ''; }
+        }
+
+        function setHash(p) {
+            const h = pathToHash(p);
+            if (location.hash === h) return;   // also stops hashchange from looping
+            location.hash = h;
+        }
+
+        function applyHash() {
+            if (!cachedContents[ROOT_PATH]) return;   // nothing loaded to point at yet
+
+            const target = hashToPath();
+            const overlay = document.getElementById('overlay');
+
+            // currentPath is updated BEFORE closing the modal in both branches
+            // below. closeModal() writes currentPath back into the hash, so
+            // closing first would overwrite the destination we are navigating to.
+
+            // No hash, or something outside the STL tree: go home
+            if (!target || !target.startsWith(ROOT_PATH)) {
+                if (currentPath !== ROOT_PATH) { currentPath = ROOT_PATH; render(); }
+                if (overlay.classList.contains('open')) window.closeModal();
+                return;
             }
+
+            // A folder
+            if (cachedContents[target]) {
+                if (target !== currentPath) { currentPath = target; render(); }
+                if (overlay.classList.contains('open')) window.closeModal();
+                return;
+            }
+
+            // A file: show the folder it lives in, and open the viewer for STLs
+            const parent = target.slice(0, target.lastIndexOf('/'));
+            const item = (cachedContents[parent] || []).find(i => i.path === target);
+            if (!item) return;
+
+            if (parent !== currentPath) { currentPath = parent; render(); }
+
+            if (item.name.toLowerCase().endsWith('.stl')) {
+                const alreadyShowing = overlay.classList.contains('open')
+                    && document.getElementById('modal-path').textContent === target;
+                if (!alreadyShowing) window.openModal(item.name, `${RAW}/${item.path}`, item.path);
+            }
+        }
+
+        window.addEventListener('hashchange', applyHash);
+
+        // Every folder is already in memory from the single tree fetch,
+        // so navigation never hits the network.
+        window.navigate = function (path) {
+            currentPath = path;
             render();
+            setHash(path);
         };
 
-        window.openModal = function (name, url, path) {
+        // Bumped on every open and close so a slow download that finishes late
+        // cannot draw itself into a modal the user has already moved on from.
+        let loadToken = 0;
+
+        window.openModal = async function (name, url, path) {
+            const token = ++loadToken;
+
             document.getElementById('modal-name').textContent = name;
             document.getElementById('modal-path').textContent = path;
+            document.getElementById('modal-dims').textContent = '';
             document.getElementById('dl-btn').href = url;
             document.getElementById('dl-btn').download = name;
-            document.getElementById('canvas-loading').textContent = 'Loading model...';
-            document.getElementById('canvas-loading').style.display = 'flex';
             document.getElementById('overlay').classList.add('open');
+            setCanvasMessage('Loading viewer...');
+            setHash(path);
 
-            if (!renderer) initThree();
-            loadSTL(url);
+            try {
+                await ensureThree();
+            } catch {
+                setCanvasMessage('3D viewer unavailable. Could not load three.js.');
+                return;
+            }
+            if (token !== loadToken) return;   // closed, or another part opened meanwhile
+
+            if (!renderer) {
+                try {
+                    initThree();
+                } catch {
+                    setCanvasMessage('Your browser could not start WebGL.');
+                    return;
+                }
+            }
+            loadSTL(url, token);
         };
 
         window.closeModal = function () {
+            loadToken++;   // invalidate any download still in flight
             document.getElementById('overlay').classList.remove('open');
             destroyThree();
+            setHash(currentPath);
         };
 
         document.getElementById('overlay').addEventListener('click', e => {
@@ -540,7 +767,8 @@
             return `${Math.floor(mins / 60)}h`;
         }
 
-        init();
+        // Load the tree first, then honour whatever the URL hash points at.
+        init().then(applyHash);
     </script>
 </body>
 
