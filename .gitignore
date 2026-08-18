@@ -1,3 +1,6 @@
 readme.txt
 **/wifi_config.h
 **/.env
+**/__pycache__
+**/EMG_implementation
+**/emg_protocol.json
