@@ -1,4 +1,6 @@
-mediapipe     
-opencv-python   
-pyserial           
+mediapipe
+opencv-python
+pyserial
 python-dotenv
+numpy
+matplotlib
