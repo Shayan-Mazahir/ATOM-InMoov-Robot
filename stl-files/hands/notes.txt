@@ -1,0 +1,3 @@
+the i2_PulleyX5V1.stl is designed for the servo motor, its specifically for Handi2 model since it only uses 1 fishing wire as tendon as compared to the old version where we had 2.
+
+and ofc it works with both left and right hand model
