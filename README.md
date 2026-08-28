@@ -6,7 +6,10 @@
 
 Hold your hand in front of a webcam and the robot hand copies it. No gloves, no sensors strapped to you, just a camera, some math, and five servos.
 
-**Status:** Phase 0 -> prototype hand, tethered over USB serial. The software pipeline works end to end.
+**Update:** I'll be switching from ESP32 to Arduino, I somehow burnt my ESP32, don't even know how, plugged it in yesterday ma guy starting smoking. Will probably jump from Arduino to RasberryPI or STM32, it's not like I am taking baby steps, I am jumping and burning up components as I go lol (help, my budget..)
+
+
+**Status:** Phase 0 -> ~~prototype hand, tethered over USB serial. The software pipeline works end to end.~~ Done, and works
 
 > ### ⚠️ This README lags behind the build
 >
