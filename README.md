@@ -1,6 +1,6 @@
 # Work halted due to EMG sensor not working
 
-> Works has been on pause for a few months now due to EMG sensor not making any sense, I've tried researching about it but am unable to do so. I've tried contacting various people on Discord (servers) and Reddit but have no luck so far. Project isn't abandoned just hella slow... Any and all my research is linked here: 
+> Works has been on pause for a few months now due to EMG sensor not making any sense, I've tried researching about it but am unable to do so. I've tried contacting various people on Discord (servers) and Reddit but have no luck so far. Project isn't abandoned just hella slow... Any and all my research is linked here: https://github.com/Shayan-Mazahir/ATOM-InMoov-Robot/blob/main/EMG/README.MD
 
 # ATOM
 
