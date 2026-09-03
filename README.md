@@ -1,3 +1,7 @@
+# Work halted due to EMG sensor not working
+
+> Works has been on pause for a few months now due to EMG sensor not making any sense, I've tried researching about it but am unable to do so. I've tried contacting various people on Discord (servers) and Reddit but have no luck so far. Project isn't abandoned just hella slow... Any and all my research is linked here: 
+
 # ATOM
 
 > A humanoid robot that mirrors your movement in real time, built on the open-source [InMoov](https://inmoov.fr) platform.
