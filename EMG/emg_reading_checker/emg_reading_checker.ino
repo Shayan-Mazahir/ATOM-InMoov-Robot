@@ -1,126 +1,130 @@
-/**This code contains the following things:
-- Custom EMG Filter based of 60Hz
-- A very not-so-reliable-but-reliable way of checking if ur sensor is working or not
-- and some math that i dont fully understand
-- oh yeah make sure ur either:
-                              - using A4 on Arduino
-                              - or change line 9**/
+/*
+ * OYMotion EMGFilters example, adapted to record to EEPROM so it can run
+ * on battery power with no USB attached.
+ *
+ * Based on OYMotion Inc. 2019 example code (BSD 2-clause).
+ *
+ * Stores the raw 64-sample running sum instead of the truncated mean,
+ * to keep 64x the resolution.
+ *
+ * USE:
+ *   1. Set RECORDING to 1, upload from the laptop
+ *   2. Unplug USB from the laptop, plug into a USB power bank
+ *   3. 20 s slow blink   - get set up
+ *      10 s fast blink   - settle, hands off everything
+ *      5 s LED OFF       - filter warm-up (do not be thrown by the dark gap)
+ *      SOLID ON, 0.5 s   - RECORDING
+ *      3 long blinks     - done
+ *   4. Back to the laptop, set RECORDING to 0, upload
+ *   5. Serial Monitor at 115200
+ */
+
+#if defined(ARDUINO) && ARDUINO >= 100
+#include "Arduino.h"
+#else
+#include "WProgram.h"
+#endif
+
+#include "EMGFilters.h"
+#include <EEPROM.h>
+
+// 1 = record (run on power bank), 0 = dump to serial (run on laptop)
+#define RECORDING 0
 
 #define SensorInputPin A4
 
-const float FS = 1000.0;
+const int N = 500;        // 500 samples, 2 bytes each = 1000 bytes
+const int WARMUP = 5000;  // 5 seconds of settling before recording
 
-float nb0, nb1, nb2, na1, na2;
-float nx1 = 0, nx2 = 0, ny1 = 0, ny2 = 0;
-float hpA, hpPrevIn = 0, hpPrevOut = 0;
-float envA, env = 0;
+EMGFilters myFilter;
 
-unsigned long nextSample;
+SAMPLE_FREQUENCY sampleRate = SAMPLE_FREQ_1000HZ;
+NOTCH_FREQUENCY  humFreq    = NOTCH_FREQ_60HZ;   // 60 Hz for North America
 
-void setupNotch(float f0, float Q) {
-  float w0 = 2.0 * PI * f0 / FS;
-  float alpha = sin(w0) / (2.0 * Q);
-  float a0 = 1 + alpha;
-  nb0 =  1.0 / a0;
-  nb1 = -2.0 * cos(w0) / a0;
-  nb2 =  1.0 / a0;
-  na1 = -2.0 * cos(w0) / a0;
-  na2 = (1 - alpha) / a0;
+#define BUF_LEN 64
+uint16_t rectBuf[BUF_LEN];
+uint8_t  rectIndex = 0;
+uint32_t rectSum   = 0;
+
+void bufAdd(uint16_t val) {
+  rectSum -= rectBuf[rectIndex];
+  rectSum += val;
+  rectBuf[rectIndex] = val;
+  rectIndex = (rectIndex + 1) % BUF_LEN;
 }
 
-float sampleOnce() {
-  nextSample += 1000;
-  float x = analogRead(SensorInputPin) - 512.0;
-  float y = nb0 * x + nb1 * nx1 + nb2 * nx2 - na1 * ny1 - na2 * ny2;
-  nx2 = nx1; nx1 = x;
-  ny2 = ny1; ny1 = y;
-  float hp = hpA * (hpPrevOut + y - hpPrevIn);
-  hpPrevIn = y;
-  hpPrevOut = hp;
-  env += envA * (fabs(hp) - env);
-  while ((long)(micros() - nextSample) < 0) { }
-  return env;
-}
-
-// average env over a window, in milliseconds
-float measure(int ms) {
-  double sum = 0;
-  for (int i = 0; i < ms; i++) sum += sampleOnce();
-  return sum / ms;
-}
-
-void countdown(const char *label, int secs) {
-  Serial.print(label);
-  for (int s = secs; s > 0; s--) {
-    Serial.print(" ");
-    Serial.print(s);
-    measure(1000);            // 1 second of samples, discarded
+void blink(int times, int ms) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(LED_BUILTIN, HIGH); delay(ms);
+    digitalWrite(LED_BUILTIN, LOW);  delay(ms);
   }
-  Serial.println();
 }
 
 void setup() {
-  Serial.begin(250000);
-  setupNotch(60.0, 8.0);
-  float rcHP = 1.0 / (2.0 * PI * 10.0);    // was 20.0 — let more through
-  hpA = rcHP / (rcHP + 1.0 / FS);
-  float rcEnv = 1.0 / (2.0 * PI * 10.0);   // was 4.0 — faster envelope
-  envA = (1.0 / FS) / (rcEnv + 1.0 / FS);
-  nextSample = micros();
+  pinMode(LED_BUILTIN, OUTPUT);
 
-  Serial.println();
-  Serial.println("Strap the sensor on. Starting in 5 seconds.");
-  countdown("Settling...", 5);
-}
+  myFilter.init(sampleRate, humFreq, true, true, true);
 
-void loop() {
-  const int ROUNDS = 8;
-  float rests[ROUNDS], flexes[ROUNDS];
-  int wins = 0;
+  rectSum   = 0;
+  rectIndex = 0;
+  for (int j = 0; j < BUF_LEN; j++) rectBuf[j] = 0;
 
-  for (int r = 0; r < ROUNDS; r++) {
-    Serial.print("\n--- Round ");
-    Serial.print(r + 1);
-    Serial.print(" of ");
-    Serial.println(ROUNDS);
+#if RECORDING
 
-    Serial.println(">>> RELAX");
-    measure(1000);
-    rests[r] = measure(3000);
+  // 20 s: unplug from laptop, move to power bank
+  blink(20, 500);
 
-    countdown("    clench in", 2);
+  // 10 s: get positioned and settled
+  blink(50, 100);
 
-    Serial.println(">>> CLENCH");
-    measure(1000);
-    flexes[r] = measure(3000);
-
-    Serial.print("    rest ");
-    Serial.print(rests[r], 2);
-    Serial.print("   clench ");
-    Serial.print(flexes[r], 2);
-    Serial.print("   diff ");
-    Serial.print(flexes[r] - rests[r], 2);
-    if (flexes[r] > rests[r]) { wins++; Serial.print("  <-- up"); }
-    Serial.println();
+  // 5 s warm-up, LED OFF, so the IIR state and ring buffer reach steady state
+  digitalWrite(LED_BUILTIN, LOW);
+  unsigned long warm = micros();
+  for (int i = 0; i < WARMUP; i++) {
+    warm += 1000;
+    int d = analogRead(SensorInputPin);
+    int f = myFilter.update(d);
+    bufAdd(abs(f));
+    while ((long)(micros() - warm) < 0) { }
   }
 
-  float rSum = 0, fSum = 0;
-  for (int i = 0; i < ROUNDS; i++) { rSum += rests[i]; fSum += flexes[i]; }
+  // SOLID ON = recording
+  digitalWrite(LED_BUILTIN, HIGH);
 
-  Serial.println("\n=========== RESULT ===========");
-  Serial.print("avg rest   : "); Serial.println(rSum / ROUNDS, 2);
-  Serial.print("avg clench : "); Serial.println(fSum / ROUNDS, 2);
-  Serial.print("clench higher in ");
-  Serial.print(wins);
-  Serial.print(" of ");
-  Serial.print(ROUNDS);
-  Serial.println(" rounds");
+  unsigned long next = micros();
+  for (int i = 0; i < N; i++) {
+    next += 1000;
 
-  if (wins >= 7)      Serial.println("VERDICT: real signal (consistent)");
-  else if (wins >= 6) Serial.println("VERDICT: probably real");
-  else if (wins >= 5) Serial.println("VERDICT: suggestive, not conclusive");
-  else                Serial.println("VERDICT: no consistent response");
-  Serial.println("==============================");
+    int data = analogRead(SensorInputPin);
+    int dataAfterFilter = myFilter.update(data);
 
-  countdown("Restarting in", 5);
+    bufAdd(abs(dataAfterFilter));
+
+    // store the raw running sum, not the truncated mean
+    uint16_t envelope = (rectSum > 65535) ? 65535 : (uint16_t)rectSum;
+
+    EEPROM.write(i * 2,     envelope & 0xFF);
+    EEPROM.write(i * 2 + 1, (envelope >> 8) & 0xFF);
+
+    while ((long)(micros() - next) < 0) { }
+  }
+
+  digitalWrite(LED_BUILTIN, LOW);
+  delay(500);
+  blink(3, 800);
+
+#else
+
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("--- envelope sum dump (vendor filter, 60 Hz notch) ---");
+  for (int i = 0; i < N; i++) {
+    uint16_t v = EEPROM.read(i * 2) | (EEPROM.read(i * 2 + 1) << 8);
+    Serial.println(v);
+  }
+  Serial.println("--- end ---");
+
+#endif
 }
+
+void loop() { }

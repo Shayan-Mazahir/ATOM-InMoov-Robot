@@ -429,6 +429,289 @@ in principle, if the signal is clean.
 
 ---
 
+---
+
+# 4 September - Day 2
+
+Everything above this line is from the first session. This section is a separate
+day. Read the two together: several Step 1-7 conclusions get overturned here, and
+one Day 1 result becomes an unexplained contradiction rather than a settled fact.
+
+---
+
+## Step 8 - Two real defects in DFRobot's own example code
+
+### Defect 1: `sq()` overflows 16-bit `int` on AVR
+
+The older single-channel example does:
+
+    int DataAfterFilter = myFilter.update(Value);
+    int envlope = sq(DataAfterFilter);
+
+On the Mega, `int` is 16-bit (max 32767). Any filtered value above ~181 overflows
+and wraps negative, printing as `4294936729`, `4294951145` and similar. That
+explains the "4000000+ values" noted at the end of Step 4 - it was never a sensor
+fault, it was integer overflow in the vendor sketch.
+
+Fix:
+
+    long DataAfterFilter = myFilter.update(Value);
+    long envlope = DataAfterFilter * DataAfterFilter;
+
+**Consequence:** every large reading from the stock sketch was garbage, including
+the "~25000 at rest" figure that DFRobot's calibration procedure (Step 6) tells
+you to use as your threshold. That calibration cannot be performed correctly on an
+AVR board with the shipped code.
+
+### Defect 2: `CYCLE_BUF_MEAN` truncates the entire signal
+
+The 2019 two-channel example computes its envelope as:
+
+    uint16_t envelope = CYCLE_BUF_MEAN(cb) * 2;    // (rectSum / 64) * 2
+
+Integer division by 64. Once mains coupling is removed (see Step 9) the noise
+floor is low enough that **the whole signal is smaller than the divisor** and gets
+truncated away. Real dumps read literally:
+
+    8 8 8 8 6 6 6 6 4 4 4 4 2 2 2 2 4 4 4 4 ...
+
+Fix - store the running sum, keep 64x the resolution:
+
+    uint16_t envelope = (rectSum > 65535) ? 65535 : (uint16_t)rectSum;
+
+Same data, same filter. Flat "2 to 8" became traces spanning 2300-9300 with
+visible structure.
+
+Both defects are worth reporting upstream.
+
+---
+
+## Step 9 - The laptop USB rail (overturns part of Step 4)
+
+Step 4 concluded the laptop *charger* was the dominant noise source. That was
+correct but incomplete.
+
+Another builder posted side-by-side FFTs of the same rig powered two ways. Their
+"not touching the chassis" plot is a solid filled 0-3V block - **identical to the
+saturation in Step 1** - with a 50Hz spike and harmonics at 100/150/200/250/300/
+350/400 Hz. Their battery-powered plot is a flat baseline with clean contraction
+bursts and no mains spikes at all. Critically, they noted this held *even with the
+laptop running on battery*.
+
+**Laptop-on-battery is NOT the same as board-on-battery.** The Arduino was still
+being fed through the laptop's USB rail and referenced to a floating laptop.
+
+DFRobot's own 2019 example states this outright, and it was missed on Day 1:
+
+> "Please unplug any power adapters when using sEMG sensors. Only battery powered
+> systems can be connected directly/indirectly to sEMG sensors."
+
+**Result:** Arduino run from a USB power bank with the laptop fully disconnected
+gave the first unsaturated trace of the project - **293 to 338, centred ~312**,
+never touching either rail. Compare every prior run pinned at 0 and 614.
+
+### The tradeoff this creates
+No USB means no serial. Workarounds used:
+- **EEPROM buffering** - record on battery, dump over serial afterwards. The Mega
+  has 4KB, enough for 500 samples at 2 bytes.
+- **LED on pin 13 as a live saturation indicator** - solid = under 20% railed,
+  off = saturated. Readable across the room with no data connection.
+
+Proper fixes, not yet acquired: a USB isolator (ADuM3160-based, ~$20-40) gives
+live serial *and* isolation simultaneously; an HC-05/HC-06 Bluetooth module gives
+wireless serial and is the simpler swap since existing sketches work unchanged.
+
+---
+
+## Step 10 - Overturns Step 7's hardware-tier conclusion
+
+Step 7 concluded the gap was instrumentation - that dry passive electrodes at this
+tier could not resolve EMG.
+
+**That was overstated.** The SEN0240 ships with dry electrodes, DFRobot documents
+it working with them, and other builders get it working. The blockers were the two
+code defects in Step 8 and the power path in Step 9 - not electrode tier.
+
+Kumar et al. remains a useful reference for what a funded lab uses, but it was
+used here to justify near-abandonment of a solvable problem. Worth remembering as
+a reasoning failure, not just a hardware note.
+
+---
+
+## Step 11 - Component isolation (all clean)
+
+Run after Day 2 opened with the signal fully saturated again (96-100% railed).
+
+| Component | Test | Result |
+|---|---|---|
+| Arduino A4 / ADC | jumper to GND, then to 5V | 0 and 1023, steady. **Good.** |
+| Sensor board | read with electrode jack REMOVED | oscillates ~205-393, **centred ~300**, not saturated. **Good.** |
+| A4 floating | nothing connected | ~284-297. Expected ambient. |
+
+**Key comparison:**
+- Electrodes connected, pads in AIR -> rails 0 <-> 614
+- Electrodes connected, pads ON SKIN -> rails 0 <-> 614, **identical**
+
+On proper skin contact the differential amp should come out of saturation via
+common-mode rejection. It did not change at all between air and skin.
+
+### Variables eliminated on Day 2
+Marked placement reproduced exactly; hard contact pressure; skin wetted to visibly
+damp; laptop unplugged; moved to a different room; 8-hour cold start; **a second
+independent electrode set**; jack re-seated repeatedly. None changed anything.
+
+---
+
+## Step 12 - The reference electrode lead, and why it is NOT closed
+
+Observed on laptop USB power:
+- Touching the laptop chassis dropped the reading from ~60 to 5-8
+- Touching the **reference** pad dropped it
+- Touching the **signal** pads did nothing
+
+That pointed cleanly at the reference electrode not making skin contact - the body
+floating with no reference, and a fingertip (lower impedance than forearm skin)
+substituting for it.
+
+**Then it reversed.** On battery power, holding the reference pad caused **full
+saturation, 0 <-> 627 hard clipping** - dramatically worse.
+
+Plausible reading: on USB the body was already coupled to the laptop, so touching
+the pad tied the sensor reference to that same potential. On battery the system is
+floating and isolated, so a finger injects ambient hum instead of providing a
+reference.
+
+**This is an open lead, not a closed one.** The reversal was never explained. Do
+not treat the reference/ground question as ruled out.
+
+---
+
+## Step 13 - Community input, and one suggestion that should NOT be followed
+
+Two suggestions received:
+
+**"Add a voltage divider before the ADC to stop the clipping."**
+**Do not do this.** The clipping happens *inside the sensor's amplifier*, before
+its output. The SEN0240 outputs 0-3V into a 0-5V ADC and physically cannot
+over-range it. A divider would scale down an already-clipped square wave and
+recover nothing.
+
+**"Ground the circuit to mains earth (PE) to stop it floating."**
+**Do not do this either.** Biosignal equipment is deliberately *isolated* from
+mains earth - that is why USB isolators and battery power are the standard
+recommendations. With electrodes on the body, bonding the circuit to earth creates
+a fault path through the user. Isolation is the correct direction, not earthing.
+
+The genuinely useful community input was the USB-rail diagnosis in Step 9 and the
+signal-reference observation in Step 12.
+
+---
+
+## Step 14 - A retracted result (and why the control mattered)
+
+Three recordings, battery power, 60Hz notch, storing `rectSum`:
+
+| Condition | peak | trough | shape |
+|---|---|---|---|
+| Repeated fast open/close | 8123 | 2738 | repeating peaks |
+| Single sustained fist | 9265 | 2581 | ramp, plateau, decay |
+| **REST - no motion** | **8109** | **~2300** | **ramp, peak, decay** |
+
+The first two were initially read as real muscle activity - different shapes,
+each apparently matching the motion performed.
+
+**The rest control produces the same shape and nearly the same peak.** Both peak
+around sample 55. 9265 vs 8109 is not a meaningful separation. The
+ramp-plateau-decay shape is a settling transient present on every run regardless
+of what the arm does.
+
+### How that error happened
+No control was run before the claim was made; the interpretation was not blind
+(the motion was known in advance); two runs, no replication. Day 1's result was
+explicitly protected against exactly this with a null control. That safeguard was
+skipped here and the claim did not survive first contact with one.
+
+### Follow-up: the transient is not filter settling
+Warm-up extended 500 -> 5000 samples (5 seconds). **The transient survives.** Five
+seconds is far more than an IIR chain and a 64-entry ring buffer need, so the
+filter is not the cause. Remaining candidates, unconfirmed: the sensor's own
+analog front end settling after power-up, or the electrode-skin interface
+stabilising.
+
+Useful by-product: after ~sample 100 the resting trace holds a **stable 3300-3700**
+for the rest of the window. First stable resting reference obtained.
+
+### Rest vs clench on the steady-state region only
+
+| Condition | steady-state (samples 100+) |
+|---|---|
+| Rest | ~3300 - 3700 |
+| Clench | ~2600 - 4500, wandering |
+
+**Negative.** Clench does not settle higher, and spends much of the later
+recording *below* the resting range. Between-run baseline drift exceeds the effect
+being looked for, so comparing two separate recordings cannot resolve this.
+
+**Better design, not yet run:** rest and clench *within a single recording* -
+still for the first half, hard clench for the second, compare halves of the same
+trace. Same session, same drift, same electrode state.
+
+---
+
+## Status as of 4 September
+
+### Established, well evidenced
+1. **Laptop USB power saturates the input; battery power removes it.** Confirmed
+   directly, independently by another builder's FFTs, and stated in DFRobot's own
+   example comment.
+2. **`CYCLE_BUF_MEAN` integer division destroys the signal** on a low-noise input.
+3. **`sq()` overflows 16-bit `int` on AVR** in the older example.
+
+(2) and (3) are genuine defects in published vendor example code.
+
+### NOT established - open contradictions
+
+**A. The reference/ground question is open.** Touching the reference helped on USB
+and hurt on battery. Never explained. See Step 12.
+
+**B. Day 1's result contradicts the Day 2 explanation.** Day 1 produced a 7/8
+rest-vs-clench result **on laptop USB power**, with a matched null control (4/8), a
+cross-placement replication, and a physical-disconnection control (4/8, 4/8, 5/8).
+If USB power makes measurement impossible, that should not have been achievable.
+
+Either the Day 1 result was spurious despite its controls, or the USB-power
+explanation is incomplete. **This contradiction is unresolved and is the most
+likely location of the real answer.** It is the thing to lead with when asking for
+help.
+
+**C. No muscle signal has been demonstrated on Day 2.** Every attempt to show a
+rest/clench difference has failed or been retracted.
+
+### Working configuration so far
+- Arduino Mega, sensor on **A4**
+- **USB power bank, laptop disconnected entirely**
+- OYMotion EMGFilters, `SAMPLE_FREQ_1000HZ`, **`NOTCH_FREQ_60HZ`**
+- 64-sample rectified ring buffer, **store `rectSum`, never `rectSum / 64`**
+- EEPROM capture during battery operation, serial dump afterwards
+- LED on pin 13 as a live saturation indicator
+- Warm-up is currently insufficient - a settling transient dominates the window
+
+### Next steps
+- Within-recording rest/clench comparison (halves of one trace)
+- USB isolator or HC-05 Bluetooth for live data without the EEPROM round-trip
+- Report both vendor defects upstream
+- Second channel for flexor/extensor discrimination
+- Post this log, leading with contradiction **B**
+
+### A note on method
+On Day 2 hypotheses were generated faster than they were tested, and several were
+wrong: the warm-up theory, the reference-electrode conclusion, Step 7's
+hardware-tier argument, and a "working" claim that a rest control demolished
+immediately. Every one of those was caught by running a control rather than by
+reasoning harder. Treat any untested hypothesis in this log with suspicion.
+
+---
+
 ## Interpreting %rail
 
 | %rail   | Meaning                                                          |
@@ -485,3 +768,41 @@ in principle, if the signal is clean.
   remaining gap is INSTRUMENTATION, not technique. Key follow-up refs: Hermens
   et al. 2000 (SENIAM placement standard) and Merletti et al. 2009 (sEMG
   instrumentation state of the art).
+
+- **[4 Sep] Step 8:** TWO defects found in DFRobot's own example code. `sq()`
+  overflows 16-bit `int` on AVR (explains the "4000000+ values" at Step 4, and
+  means the Step 6 calibration cannot be done correctly with the shipped sketch).
+  `CYCLE_BUF_MEAN` integer-divides by 64 and truncates the entire signal once mains
+  coupling is gone - dumps literally read "8 8 6 6 4 4 2 2". Store `rectSum`
+  instead.
+- **[4 Sep] Step 9:** Overturns part of Step 4. Not just the charger - the laptop
+  USB RAIL itself. Laptop-on-battery is not board-on-battery. Arduino on a USB
+  power bank with the laptop fully disconnected gave the first unsaturated trace of
+  the project: 293-338, centred ~312, never railing. DFRobot's 2019 example states
+  this requirement outright.
+- **[4 Sep] Step 10:** Overturns Step 7. The hardware-tier conclusion was
+  overstated - the SEN0240 ships with dry electrodes and is documented working with
+  them. The blockers were code defects and the power path, not electrode tier.
+- **[4 Sep] Step 11:** Component isolation all clean. A4 verified (GND->0, 5V->1023);
+  sensor board verified with jack out (~300 centred, unsaturated). Pads in air vs
+  on skin rail IDENTICALLY, so contact is not being made. Eliminated: marked
+  placement, hard pressure, damp skin, different room, cold start, and a second
+  independent electrode set.
+- **[4 Sep] Step 12:** Reference-electrode lead is OPEN, not closed. Touching it
+  helped on USB power (60 -> 5-8) but caused full 0<->627 saturation on battery.
+  Reversal never explained.
+- **[4 Sep] Step 13:** Two community suggestions rejected with reasons - a voltage
+  divider (clipping is inside the amp, before its output) and earth-grounding the
+  circuit (biosignal gear is deliberately isolated; bonding to earth with
+  electrodes on the body creates a fault path through the user).
+- **[4 Sep] Step 14:** A "working signal" claim was made and RETRACTED. A rest
+  control produced the same ramp-peak-decay shape and nearly the same peak (8109)
+  as a sustained fist (9265). The shape is a settling transient, and it survives a
+  5-second warm-up so it is not the filter. Rest/clench compared on steady state:
+  negative, clench often sits below rest. Between-run drift exceeds the effect;
+  needs a within-recording design.
+- **[4 Sep] STATUS:** Established - USB-rail saturation, and both vendor code
+  defects. NOT established - the reference/ground question, and the central
+  contradiction that Day 1's controlled 7/8 result was obtained ON laptop USB,
+  which the Day 2 explanation says should have been impossible. That contradiction
+  is the thing to lead with when asking for help.
